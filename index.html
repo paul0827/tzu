@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 智能背景拍貼機 - 會員制 (修復版)</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #1a1a1a; color: white; min-height: 100vh; display: flex; justify-content: center; align-items: center; }
+        
+        .view-container { width: 95%; max-width: 900px; text-align: center; display: none; }
+        .view-container.active { display: block; animation: fadeIn 0.5s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        /* 登入樣式 */
+        .login-box { background: #333; padding: 40px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: inline-block; max-width: 400px; width: 100%; }
+        .login-box input { width: 100%; padding: 12px; margin: 10px 0; border-radius: 6px; border: 1px solid #555; background: #222; color: white; box-sizing: border-box; }
+        
+        /* 後台樣式 */
+        .admin-panel { background: #2d2d2d; padding: 20px; border-radius: 12px; text-align: left; }
+        .admin-section { margin-bottom: 30px; border-bottom: 1px solid #444; padding-bottom: 20px; }
+        .user-list, .bg-list { margin-top: 15px; max-height: 300px; overflow-y: auto; }
+        .list-item { display: flex; justify-content: space-between; align-items: center; background: #444; padding: 10px; margin-bottom: 5px; border-radius: 4px; }
+        .badge { background: #00d2ff; color: black; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+
+        /* 拍照樣式 */
+        .camera-container { position: relative; width: 100%; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.5); background: #000; margin-bottom: 20px; }
+        canvas { width: 100%; height: auto; display: block; transform: scaleX(-1); }
+        video { display: none; } 
+
+        .bg-selector { display: flex; overflow-x: auto; gap: 10px; padding: 10px 0; margin-bottom: 15px; }
+        .bg-thumb { width: 80px; height: 60px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 2px solid transparent; transition: 0.2s; background: #444; flex-shrink: 0; }
+        .bg-thumb:hover { transform: scale(1.05); }
+        .bg-thumb.active { border-color: #00d2ff; box-shadow: 0 0 8px #00d2ff; }
+
+        button { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; transition: 0.2s; margin: 5px; }
+        .btn-primary { background: #00d2ff; color: #000; }
+        .btn-danger { background: #ff4757; color: white; }
+        .btn-success { background: #2ed573; color: white; }
+
+        /* 結果視窗 */
+        #result-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 100; flex-direction: column; justify-content: center; align-items: center; }
+        #qrcode { background: white; padding: 10px; border-radius: 8px; margin: 15px 0; min-width: 150px; min-height: 150px; }
+        .result-img { max-width: 80%; max-height: 40vh; border-radius: 8px; border: 2px solid #fff; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+
+    <div id="view-login" class="view-container active">
+        <div class="login-box">
+            <h2 style="color:#00d2ff;">📷 AI 拍貼機登入</h2>
+            <input type="text" id="login-user" placeholder="帳號">
+            <input type="password" id="login-pass" placeholder="密碼">
+            <button class="btn-primary" style="width:100%" onclick="handleLogin()">登入系統</button>
+            <p style="font-size:12px; color:#888; margin-top:15px;">若無帳號請洽詢管理員</p>
+        </div>
+    </div>
+
+    <div id="view-admin" class="view-container">
+        <h2>🛠️ 後台管理系統</h2>
+        <div style="text-align: right; margin-bottom: 10px;">
+            <button class="btn-danger" onclick="logout()">登出</button>
+        </div>
+        <div class="admin-panel">
+            <div class="admin-section">
+                <h3>👤 使用者帳號管理</h3>
+                <div style="display:flex; gap:10px;">
+                    <input type="text" id="new-username" placeholder="新帳號" style="background:#222; border:1px solid #555; color:white; padding:5px;">
+                    <input type="text" id="new-password" placeholder="新密碼" style="background:#222; border:1px solid #555; color:white; padding:5px;">
+                    <button class="btn-success" onclick="adminAddUser()">新增</button>
+                </div>
+                <div id="admin-user-list" class="user-list"></div>
+            </div>
+            <div class="admin-section">
+                <h3>🖼️ 背景圖片管理</h3>
+                <input type="file" id="bg-upload" accept="image/*">
+                <button class="btn-primary" onclick="adminUploadBg()">上傳背景</button>
+                <div id="admin-bg-list" class="bg-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="view-app" class="view-container">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h3>👋 <span id="display-username" style="color:#00d2ff;">User</span></h3>
+            <button class="btn-danger" style="font-size:14px; padding:5px 10px;" onclick="logout()">登出</button>
+        </div>
+        <div class="camera-container">
+            <video id="input-video" autoplay playsinline></video>
+            <canvas id="output-canvas"></canvas>
+        </div>
+        <div class="controls">
+            <div class="bg-selector" id="bg-scroller"></div>
+            <button class="btn-primary" onclick="takePhoto()">📸 拍照並生成 QR Code</button>
+        </div>
+    </div>
+
+    <div id="result-modal">
+        <h3 style="color:white">照片已生成！</h3>
+        <img id="final-photo" class="result-img">
+        <div id="loading-text" style="color:#00d2ff; font-weight:bold; margin-bottom: 10px;">正在上傳至 ImgBB...</div>
+        <div id="qrcode"></div>
+        <p style="color:#aaa; font-size:12px; margin-top:5px;">請使用手機掃描下載</p>
+        <button class="btn-danger" onclick="closeResult()">關閉視窗</button>
+    </div>
+
+    <script>
+        // ==========================================
+        // ⚠️ 重要：請在這裡貼上你的 ImgBB API Key ⚠️
+        const IMGBB_API_KEY = '5955965a4cfabb7be5be53dc27382a3c'; 
+        // ==========================================
+
+        let userList = [];
+        let backgroundList = [];
+        let selfieSegmentation;
+        let activeBackground = null;
+        let cameraObj = null;
+
+        window.onload = function() { loadData(); };
+
+        // --- 資料管理 ---
+        function loadData() {
+            const storedUsers = localStorage.getItem('app_users');
+            userList = storedUsers ? JSON.parse(storedUsers) : [];
+            const storedBgs = localStorage.getItem('custom_backgrounds');
+            backgroundList = storedBgs ? JSON.parse(storedBgs) : [];
+        }
+        function saveData() {
+            localStorage.setItem('app_users', JSON.stringify(userList));
+            localStorage.setItem('custom_backgrounds', JSON.stringify(backgroundList));
+        }
+
+        // --- 視圖切換 ---
+        function switchView(viewId) {
+            document.querySelectorAll('.view-container').forEach(el => el.classList.remove('active'));
+            document.getElementById(viewId).classList.add('active');
+            if (viewId !== 'view-app') stopCamera();
+        }
+
+        // --- 登入邏輯 ---
+        function handleLogin() {
+            const u = document.getElementById('login-user').value.trim();
+            const p = document.getElementById('login-pass').value.trim();
+            if (u === '0' && p === '0') {
+                switchView('view-admin');
+                renderAdminPanels();
+                return;
+            }
+            const validUser = userList.find(user => user.username === u && user.password === p);
+            if (validUser) {
+                document.getElementById('display-username').innerText = validUser.username;
+                switchView('view-app');
+                initCameraSystem();
+                renderUserBgSelector();
+            } else {
+                alert('帳號或密碼錯誤！');
+            }
+        }
+        function logout() {
+            document.getElementById('login-user').value = '';
+            document.getElementById('login-pass').value = '';
+            switchView('view-login');
+        }
+
+        // --- 管理員功能 ---
+        function renderAdminPanels() { renderUserList(); renderAdminBgList(); }
+        
+        function adminAddUser() {
+            const u = document.getElementById('new-username').value.trim();
+            const p = document.getElementById('new-password').value.trim();
+            if (!u || !p) return alert('請輸入完整資訊');
+            if (u === '0') return alert('帳號不能為 0');
+            if (userList.some(user => user.username === u)) return alert('帳號已存在');
+            userList.push({ username: u, password: p });
+            saveData();
+            renderUserList();
+            document.getElementById('new-username').value = '';
+            document.getElementById('new-password').value = '';
+            alert('新增成功');
+        }
+        function adminDeleteUser(username) {
+            if (confirm(`刪除 ${username}?`)) {
+                userList = userList.filter(user => user.username !== username);
+                saveData();
+                renderUserList();
+            }
+        }
+        function renderUserList() {
+            const container = document.getElementById('admin-user-list');
+            container.innerHTML = userList.length ? '' : '<p style="color:#888;">無使用者</p>';
+            userList.forEach(user => {
+                container.innerHTML += `<div class="list-item"><span>👤 ${user.username} (${user.password})</span><button class="btn-danger" onclick="adminDeleteUser('${user.username}')">刪除</button></div>`;
+            });
+        }
+        function adminUploadBg() {
+            const file = document.getElementById('bg-upload').files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                backgroundList.push({ id: Date.now(), src: e.target.result });
+                saveData();
+                renderAdminBgList();
+                alert('上傳成功');
+            };
+            reader.readAsDataURL(file);
+        }
+        function adminDeleteBg(id) {
+            if (confirm('刪除此背景?')) {
+                backgroundList = backgroundList.filter(bg => bg.id !== id);
+                saveData();
+                renderAdminBgList();
+            }
+        }
+        function renderAdminBgList() {
+            const container = document.getElementById('admin-bg-list');
+            container.innerHTML = backgroundList.length ? '' : '<p style="color:#888;">無背景</p>';
+            backgroundList.forEach(bg => {
+                container.innerHTML += `<div class="list-item"><img src="${bg.src}" style="width:50px;"> <button class="btn-danger" onclick="adminDeleteBg(${bg.id})">刪除</button></div>`;
+            });
+        }
+
+        // --- 相機與 AI ---
+        async function initCameraSystem() {
+            if (selfieSegmentation) return; 
+            const videoElement = document.getElementById('input-video');
+            const canvasElement = document.getElementById('output-canvas');
+            const canvasCtx = canvasElement.getContext('2d');
+
+            selfieSegmentation = new SelfieSegmentation({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`});
+            selfieSegmentation.setOptions({ modelSelection: 1, selfieMode: false });
+            selfieSegmentation.onResults((results) => {
+                canvasElement.width = videoElement.videoWidth;
+                canvasElement.height = videoElement.videoHeight;
+                canvasCtx.save();
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+                canvasCtx.drawImage(results.segmentationMask, 0, 0, canvasElement.width, canvasElement.height);
+                canvasCtx.globalCompositeOperation = 'source-in';
+                canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+                canvasCtx.globalCompositeOperation = 'destination-over';
+                if (activeBackground) canvasCtx.drawImage(activeBackground, 0, 0, canvasElement.width, canvasElement.height);
+                else { canvasCtx.fillStyle = '#222'; canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height); }
+                canvasCtx.restore();
+            });
+
+            cameraObj = new Camera(videoElement, {
+                onFrame: async () => await selfieSegmentation.send({image: videoElement}),
+                width: 1280, height: 720
+            });
+            cameraObj.start();
+        }
+
+        function stopCamera() {} // 保持相機佔用以避免頻繁重啟
+
+        function renderUserBgSelector() {
+            const scroller = document.getElementById('bg-scroller');
+            scroller.innerHTML = `<div class="bg-thumb ${!activeBackground?'active':''}" onclick="selectBg(null, this)" style="display:flex;align-items:center;justify-content:center;background:#000;color:white;font-size:12px;">無背景</div>`;
+            backgroundList.forEach(bg => {
+                const img = document.createElement('img');
+                img.src = bg.src;
+                img.className = 'bg-thumb';
+                img.onclick = () => selectBg(bg.src, img);
+                scroller.appendChild(img);
+            });
+        }
+
+        function selectBg(src, el) {
+            document.querySelectorAll('.bg-thumb').forEach(i => i.classList.remove('active'));
+            if(el) el.classList.add('active');
+            if (!src) activeBackground = null;
+            else { const img = new Image(); img.src = src; img.onload = () => activeBackground = img; }
+        }
+
+        // --- 拍照與 API 上傳 (關鍵修正區) ---
+        function takePhoto() {
+            // 1. 檢查 API Key
+            if(IMGBB_API_KEY.includes('YOUR_IMGBB_API_KEY') || IMGBB_API_KEY.length < 10) {
+                alert('❌ 錯誤：請先打開 HTML 檔案，在程式碼中填入您的 ImgBB API Key！');
+                return;
+            }
+
+            const canvas = document.getElementById('output-canvas');
+            const dataURL = canvas.toDataURL('image/png');
+            
+            // 顯示介面
+            const modal = document.getElementById('result-modal');
+            const loading = document.getElementById('loading-text');
+            const qrDiv = document.getElementById('qrcode');
+            
+            modal.style.display = 'flex';
+            document.getElementById('final-photo').src = dataURL;
+            loading.style.display = 'block';
+            loading.innerText = '正在上傳至 ImgBB...';
+            qrDiv.innerHTML = ''; // 清空舊 QR Code
+
+            // 準備上傳
+            const cleanBase64 = dataURL.split(',')[1];
+            const formData = new FormData();
+            formData.append('image', cleanBase64);
+            // 設定 600秒後過期 (可選)
+            // formData.append('expiration', 600); 
+
+            console.log("開始上傳...");
+
+            fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(result => {
+                console.log("ImgBB 回應:", result);
+                loading.style.display = 'none';
+
+                if (result.success) {
+                    // 成功：生成 QR Code
+                    const imgUrl = result.data.url;
+                    console.log("圖片網址:", imgUrl);
+                    
+                    try {
+                        new QRCode(qrDiv, {
+                            text: imgUrl,
+                            width: 150,
+                            height: 150,
+                            colorDark : "#000000",
+                            colorLight : "#ffffff",
+                            correctLevel : QRCode.CorrectLevel.H
+                        });
+                    } catch (e) {
+                        alert("QR Code 生成失敗，請檢查網路連線");
+                        qrDiv.innerHTML = `<a href="${imgUrl}" target="_blank" style="color:black;background:white;padding:10px;text-decoration:none;">點擊下載圖片</a>`;
+                    }
+
+                } else {
+                    // 失敗：顯示 ImgBB 的錯誤訊息
+                    const errorMsg = result.error ? result.error.message : '未知錯誤';
+                    alert('❌ 上傳失敗: ' + errorMsg);
+                    loading.innerText = '上傳失敗';
+                }
+            })
+            .catch(error => {
+                loading.style.display = 'none';
+                console.error('Fetch Error:', error);
+                alert('❌ 網路錯誤：無法連線到 ImgBB，請檢查網路或 API Key 設定。');
+            });
+        }
+
+        function closeResult() {
+            document.getElementById('result-modal').style.display = 'none';
+        }
+
+    </script>
+</body>
+</html>
